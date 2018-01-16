@@ -1,3 +1,5 @@
+extern crate chan;
+
 pub mod bulkheads {
 
     pub type BulkheadResult<T,E> = Result<T, BulkheadError<E>>;
@@ -5,15 +7,17 @@ pub mod bulkheads {
     pub enum BulkheadError<E> {
         Task(E),
         TimedOut,
-        TooManyJobs,
+        TooManyJobs(usize),
         Closed
     }
 
     mod executor {
         use std::sync::{Arc, Mutex};
-        use std::sync::mpsc;
         use std::time::{Duration, Instant};
+        use std::sync::mpsc;
 
+        use chan;
+   
         use super::{BulkheadError, BulkheadResult};
         
         type Task<T,E> = Box<FnOnce() -> Result<T,E> + Send + 'static>;
@@ -28,14 +32,14 @@ pub mod bulkheads {
         struct DispatchTask<T,E> {
             task: Task<T,E>,
             deadline: Option<Instant>,
-            back_channel: mpsc::Sender<BulkheadResult<T,E>>
+            back_channel: chan::Sender<BulkheadResult<T,E>>
         }
 
         #[derive(Clone)]
         pub struct BulkheadExecutor<T: Send + 'static + Sized,E: Send+'static + Sized> {
-            num_inflight: Arc<Mutex<u64>>,
+            num_inflight: Arc<Mutex<usize>>,
             default_timeout: Option<Duration>,
-            sender: mpsc::Sender<Task<T, E>>
+            sender: chan::Sender<Task<T, E>>
         }
 
         impl<T: Send + 'static, E: Send + 'static> BulkheadExecutor<T,E> {
@@ -62,8 +66,12 @@ pub mod bulkheads {
         }
 
 
-        fn run_loop() {
+        struct Worker;
 
+        impl Worker {
+            pub fn new<T, E>(receiver: chan::Receiver<DispatchTask<T,E>>) -> Worker {
+                unimplemented!()
+            }
         }
     }
 
