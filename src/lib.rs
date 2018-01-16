@@ -85,6 +85,10 @@ pub mod bulkheads {
                     break;
                 };
 
+                if is_aborted.load(Ordering::Relaxed) {
+                    break;
+                }
+
                 if to_execute.deadline.map(|dl| dl < Instant::now()).unwrap_or(false) {
                     if let Ok(_) = to_execute.back_channel.send(Err(BulkheadError::TimedOut)) {
                         continue
