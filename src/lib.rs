@@ -13,6 +13,7 @@ pub mod bulkheads {
 
     mod executor {
         use std::sync::{Arc, Mutex};
+        use std::sync::atomic::{AtomicBool, Ordering};
         use std::time::{Duration, Instant};
         use std::sync::mpsc;
 
@@ -32,7 +33,7 @@ pub mod bulkheads {
         struct DispatchTask<T,E> {
             task: Task<T,E>,
             deadline: Option<Instant>,
-            back_channel: chan::Sender<BulkheadResult<T,E>>
+            back_channel: mpsc::Sender<BulkheadResult<T,E>>
         }
 
         #[derive(Clone)]
@@ -61,10 +62,8 @@ pub mod bulkheads {
 
             fn execute_internal<F>(&self, task: F, deadline: Option<Instant>) -> BulkheadResult<T,E> where F: Fn() -> Result<T,E> {
                 unimplemented!()
-            } 
-           
+            }            
         }
-
 
         struct Worker;
 
@@ -73,10 +72,37 @@ pub mod bulkheads {
                 unimplemented!()
             }
         }
+
+        fn worker_loop<T,E>(
+            receiver: chan::Receiver<DispatchTask<T,E>>,
+            is_aborted: Arc<AtomicBool>) {
+
+            loop {
+                let to_execute = if let Some(next) = receiver.recv() {
+                    next
+                } else {
+                    // The channel does not exist anymore...
+                    break;
+                };
+
+                if to_execute.deadline.map(|dl| dl < Instant::now()).unwrap_or(false) {
+                    if let Ok(_) = to_execute.back_channel.send(Err(BulkheadError::TimedOut)) {
+                        continue
+                       } else {
+                            // The sender hung up. Exit. 
+                        continue;
+                        }
+                    }
+
+                let to_send = match (to_execute.task)() {
+                    Ok(t) => Ok(t),
+                    Err(err) =>  Err(BulkheadError::Task(err)),
+                };
+
+
+            }
+
+            }
     }
-
-
-
-
 
 }
