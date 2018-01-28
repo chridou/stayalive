@@ -1,6 +1,6 @@
-//! Bulkheads for protecting resources
+//! Bulkheads for protecting resources and downstream services
 
-pub mod limiters;
+pub mod concurrency_limiters;
 
 pub type BulkheadResult<T, E> = Result<T, BulkheadError<E>>;
 

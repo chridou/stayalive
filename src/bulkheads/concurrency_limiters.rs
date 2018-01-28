@@ -1,4 +1,4 @@
-//! Bulkheads to limit the access to a shared resource
+//! Bulkheads to limit the concurrents accesses to a shared resource
 //!
 //! # When to use
 //!
@@ -6,13 +6,17 @@
 //! concurrently accessed but you want to achieve one
 //! of these goals:
 //!
-//! * You want to protect downstream components or services
 //! * The resource itself is limited. E.g. it can only handle
 //! a certain amount of operations at a time.
+//! * You want to protect downstream components or services
 //!
 //! # What you should know
 //!
 //! Using the components in this module has a great performance impact.
+//!
+//! Furthermore the resource managed by this bulkhead has now knowledge
+//! of the number of threads it is accessed from. So your managed resource should be
+//! able to handle the number of threads you access it from.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -40,31 +44,33 @@ pub trait SharedResourceProvider {
 }
 
 /// Limits the number of concurent accesses on a resource
-pub struct SharedResourceLimiter<P> {
+///
+/// The resource is accessed via a function that is passed the resource.
+pub struct ConcurrencyLimiter<P> {
     pool: ThreadPool,
     resource_provider: Arc<P>,
     max_queued: usize,
 }
 
-impl<P> SharedResourceLimiter<P>
+impl<P> ConcurrencyLimiter<P>
 where
     P: SharedResourceProvider + Send + Sync + 'static,
 {
-    pub fn new(resource_provider: P, config: Config) -> Result<SharedResourceLimiter<P>, String> {
+    pub fn new(resource_provider: P, config: Config) -> Result<ConcurrencyLimiter<P>, String> {
         if config.n_workers == 0 {
             return Err("'n_workers' must be greater than zero.".to_string());
         }
 
         let pool = ThreadPool::new(config.n_workers);
 
-        Ok(SharedResourceLimiter {
+        Ok(ConcurrencyLimiter {
             pool,
             resource_provider: Arc::new(resource_provider),
             max_queued: config.max_queued,
         })
     }
 
-    pub fn execute_with_deadline<T, E, F>(&self, f: F, deadline: Instant) -> BulkheadResult<T, E>
+    pub fn execute_until<T, E, F>(&self, f: F, deadline: Instant) -> BulkheadResult<T, E>
     where
         T: Send + 'static,
         E: Send + 'static,
@@ -129,9 +135,9 @@ where
     }
 }
 
-impl<P> Clone for SharedResourceLimiter<P> {
+impl<P> Clone for ConcurrencyLimiter<P> {
     fn clone(&self) -> Self {
-        SharedResourceLimiter {
+        ConcurrencyLimiter {
             pool: self.pool.clone(),
             resource_provider: self.resource_provider.clone(),
             max_queued: self.max_queued,
@@ -139,8 +145,90 @@ impl<P> Clone for SharedResourceLimiter<P> {
     }
 }
 
+/// Executes a command sent to the managed resource
+///
+/// Useful if you have a resource that always processes the same input
+/// type and always returns the same output type. E.G. an HTTP Client that
+/// always takes a request and always returnes a response or a database driver
+/// that always takes som SQL and always returns rows.
+///
+/// `CmdConcurrencyLimiter` can also execute closures the
+/// same way `ConcurrencyLimiter` does.
+#[derive(Clone)]
+pub struct CmdConcurrencyLimiter<P: SharedResourceProvider, C, T, E> {
+    limiter: ConcurrencyLimiter<P>,
+    exec_cmd: Arc<Fn(C, P::Resource) -> Result<T, E> + Send + Sync + 'static>,
+}
+
+impl<P: SharedResourceProvider, C, T, E> CmdConcurrencyLimiter<P, C, T, E>
+where
+    C: Send + 'static,
+    T: Send + 'static,
+    E: Send + 'static,
+    P: SharedResourceProvider + Send + Sync + 'static,
+{
+    /// Create a new `CmdConcurrencyLimiter` given a
+    /// `ResourceProvider` and a function that executes
+    /// a command on the resource and returns the result.
+    pub fn new<F>(
+        resource_provider: P,
+        exec_cmd: F,
+        config: Config,
+    ) -> Result<CmdConcurrencyLimiter<P, C, T, E>, String>
+    where
+        F: Fn(C, P::Resource) -> Result<T, E> + Send + Sync + 'static,
+    {
+        let limiter = ConcurrencyLimiter::new(resource_provider, config)?;
+
+        Ok(CmdConcurrencyLimiter {
+            limiter,
+            exec_cmd: Arc::new(exec_cmd),
+        })
+    }
+
+    pub fn execute_cmd(&self, cmd: C, timeout: Duration) -> BulkheadResult<T, E> {
+        let exec = self.exec_cmd.clone();
+        let f = move |resource: P::Resource| (exec)(cmd, resource);
+        self.limiter.execute(f, timeout)
+    }
+
+    pub fn execute_cmd_until(&self, cmd: C, deadline: Instant) -> BulkheadResult<T, E> {
+        let exec = self.exec_cmd.clone();
+        let f = move |resource: P::Resource| (exec)(cmd, resource);
+        self.limiter.execute_until(f, deadline)
+    }
+
+    pub fn execute<TT, EE, FF>(&self, f: FF, timeout: Duration) -> BulkheadResult<TT, EE>
+    where
+        TT: Send + 'static,
+        EE: Send + 'static,
+        FF: FnOnce(P::Resource) -> Result<TT, EE> + Send + 'static,
+    {
+        self.limiter.execute(f, timeout)
+    }
+
+    pub fn execute_until<TT, EE, FF>(&self, f: FF, deadline: Instant) -> BulkheadResult<TT, EE>
+    where
+        TT: Send + 'static,
+        EE: Send + 'static,
+        FF: FnOnce(P::Resource) -> Result<TT, EE> + Send + 'static,
+    {
+        self.limiter.execute_until(f, deadline)
+    }
+
+    /// Returns the number og jobs that are currently enqueued
+    pub fn queued_count(&self) -> usize {
+        self.limiter.queued_count()
+    }
+
+    /// Returns the number of jobs currently being executed
+    pub fn active_count(&self) -> usize {
+        self.limiter.active_count()
+    }
+}
+
 #[cfg(test)]
-mod shared_resource_limiter_tests {
+mod concurrency_limiter_tests {
     use super::*;
 
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -184,13 +272,41 @@ mod shared_resource_limiter_tests {
             max_queued: 2,
         };
 
-        let limiter = SharedResourceLimiter::new(provider, config).unwrap();
+        let limiter = ConcurrencyLimiter::new(provider, config).unwrap();
 
         let counter = Arc::new(AtomicUsize::new(0));
 
         for i in 0..n {
             let f = move |adder: Adder| adder.add(i);
             let x = limiter.execute(f, Duration::from_millis(10)).unwrap();
+            let _ = counter.fetch_add(x, Ordering::SeqCst);
+        }
+
+        let count = counter.load(Ordering::SeqCst);
+
+        assert_eq!(count, (n * (n - 1) / 2) + 42 * n);
+    }
+
+    #[test]
+    fn should_work_with_commands_from_a_single_thread() {
+        let n = 100;
+
+        let provider = AdderProvider {
+            resource: Adder { to_add: 42 },
+        };
+
+        let config = Config {
+            n_workers: 2,
+            max_queued: 2,
+        };
+
+        let limiter =
+            CmdConcurrencyLimiter::new(provider, |cmd, adder| adder.add(cmd), config).unwrap();
+
+        let counter = Arc::new(AtomicUsize::new(0));
+
+        for i in 0..n {
+            let x = limiter.execute_cmd(i, Duration::from_millis(10)).unwrap();
             let _ = counter.fetch_add(x, Ordering::SeqCst);
         }
 
@@ -213,7 +329,7 @@ mod shared_resource_limiter_tests {
             max_queued: 100,
         };
 
-        let limiter = SharedResourceLimiter::new(provider, config).unwrap();
+        let limiter = ConcurrencyLimiter::new(provider, config).unwrap();
 
         let counter = Arc::new(AtomicUsize::new(0));
 
