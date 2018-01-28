@@ -1,6 +1,6 @@
 [package]
 name = "stayalive"
-version = "0.2.0"
+version = "0.2.1"
 authors = ["Christian Douven <chridou@users.noreply.github.com>"]
 description = "A collection of resilience patterns"
 repository = "https://github.com/chridou/stayalive"

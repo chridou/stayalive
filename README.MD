@@ -9,7 +9,7 @@
 
 A library for resilience patterns.
 
-** Still in a very very early stage! **
+**Still in a very very early stage!**
 
 
 ## Usage

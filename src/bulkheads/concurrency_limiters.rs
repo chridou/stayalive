@@ -3,7 +3,7 @@
 //! # When to use
 //!
 //! You can use this patterns if you have a resource that can be
-//! concurrently accessed but you want to achieve one
+//! concurrently accessed but you want to achieve one or more
 //! of these goals:
 //!
 //! * The resource itself is limited. E.g. it can only handle
@@ -14,9 +14,16 @@
 //!
 //! Using the components in this module has a great performance impact.
 //!
-//! Furthermore the resource managed by this bulkhead has now knowledge
-//! of the number of threads it is accessed from. So your managed resource should be
+//! Furthermore the resource managed by this bulkhead has no knowledge
+//! about the number of threads it is accessed from.
+//! So your managed resource should be
 //! able to handle the number of threads you access it from.
+//!
+//! The components in this module check the timeout before
+//! a task is executed and via `rec_timeout` on the blocked thread. That
+//! means that even though a timeout error occured a running task
+//! might still being executed. This makes it mandatory that you also set
+//! timeouts(e.g. request timeouts) matching your requirements.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -45,7 +52,8 @@ pub trait SharedResourceProvider {
 
 /// Limits the number of concurent accesses on a resource
 ///
-/// The resource is accessed via a function that is passed the resource.
+/// The resource is accessed via a function that is gets the resource as
+/// a parameter.
 pub struct ConcurrencyLimiter<P> {
     pool: ThreadPool,
     resource_provider: Arc<P>,
@@ -56,6 +64,8 @@ impl<P> ConcurrencyLimiter<P>
 where
     P: SharedResourceProvider + Send + Sync + 'static,
 {
+    /// Create a new `ConcurrencyLimiter` given a
+    /// `ResourceProvider`.
     pub fn new(resource_provider: P, config: Config) -> Result<ConcurrencyLimiter<P>, String> {
         if config.n_workers == 0 {
             return Err("'n_workers' must be greater than zero.".to_string());
@@ -70,20 +80,16 @@ where
         })
     }
 
-    pub fn execute_until<T, E, F>(&self, f: F, deadline: Instant) -> BulkheadResult<T, E>
-    where
-        T: Send + 'static,
-        E: Send + 'static,
-        F: FnOnce(P::Resource) -> Result<T, E> + Send + 'static,
-    {
-        let now = Instant::now();
-        if deadline <= now {
-            Err(BulkheadError::TimedOut)
-        } else {
-            self.execute(f, deadline.duration_since(now))
-        }
-    }
-
+    /// Execute the given closure. Wait at most for the given `Duration`.
+    ///
+    /// # Errors
+    ///
+    /// * `BulkheadError::TimedOut` if the function could not be executet in time
+    /// * `BulkheadError::Task` if the execution of the function itself returned an error
+    /// * `BulkheadError::TaskLimitReached` if the maximum number of enqueued tasks was already
+    /// reached
+    /// * `BulkheadError::ResourceAcquisition` if the resource could not be provided
+    /// for the function
     pub fn execute<T, E, F>(&self, f: F, timeout: Duration) -> BulkheadResult<T, E>
     where
         T: Send + 'static,
@@ -92,7 +98,7 @@ where
     {
         let jobs = self.pool.queued_count();
         if self.pool.queued_count() > self.max_queued {
-            return Err(BulkheadError::TooManyTasks(jobs));
+            return Err(BulkheadError::TaskLimitReached(jobs));
         }
 
         let deadline = Instant::now() + timeout;
@@ -109,7 +115,7 @@ where
             let back_msg = if let Some(res) = resource_provider.get_resource() {
                 f(res).map_err(BulkheadError::Task)
             } else {
-                Err(BulkheadError::ResourceAquisitionFailed)
+                Err(BulkheadError::ResourceAcquisition)
             };
             let _ = tx.send(back_msg);
         };
@@ -124,7 +130,31 @@ where
         }
     }
 
-    /// Returns the number og jobs that are currently enqueued
+    /// Execute the given closure. Wait at most until the deadline is met.
+    ///
+    /// # Errors
+    ///
+    /// * `BulkheadError::TimedOut` if the function could not be executet in time
+    /// * `BulkheadError::Task` if the execution of the function itself returned an error
+    /// * `BulkheadError::TaskLimitReached` if the maximum number of enqueued tasks was already
+    /// reached
+    /// * `BulkheadError::ResourceAcquisition` if the resource could not be provided
+    /// for the function
+    pub fn execute_until<T, E, F>(&self, f: F, deadline: Instant) -> BulkheadResult<T, E>
+    where
+        T: Send + 'static,
+        E: Send + 'static,
+        F: FnOnce(P::Resource) -> Result<T, E> + Send + 'static,
+    {
+        let now = Instant::now();
+        if deadline <= now {
+            Err(BulkheadError::TimedOut)
+        } else {
+            self.execute(f, deadline.duration_since(now))
+        }
+    }
+
+    /// Returns the number of jobs that are currently enqueued
     pub fn queued_count(&self) -> usize {
         self.pool.queued_count()
     }
@@ -148,12 +178,12 @@ impl<P> Clone for ConcurrencyLimiter<P> {
 /// Executes a command sent to the managed resource
 ///
 /// Useful if you have a resource that always processes the same input
-/// type and always returns the same output type. E.G. an HTTP Client that
-/// always takes a request and always returnes a response or a database driver
-/// that always takes som SQL and always returns rows.
+/// type and always returns the same output type. E.g. an HTTP Client that
+/// always takes a request and always returns a response or a database driver
+/// that always takes some SQL and always returns rows.
 ///
-/// `CmdConcurrencyLimiter` can also execute closures the
-/// same way `ConcurrencyLimiter` does.
+/// `CmdConcurrencyLimiter` can also execute closures in the
+/// same way as `ConcurrencyLimiter` does.
 #[derive(Clone)]
 pub struct CmdConcurrencyLimiter<P: SharedResourceProvider, C, T, E> {
     limiter: ConcurrencyLimiter<P>,
@@ -186,18 +216,48 @@ where
         })
     }
 
+    /// Execute the given command. Wait at most for the given `Duration`.
+    ///
+    /// # Errors
+    ///
+    /// * `BulkheadError::TimedOut` if the function could not be executet in time
+    /// * `BulkheadError::Task` if the execution of the function itself returned an error
+    /// * `BulkheadError::TaskLimitReached` if the maximum number of enqueued tasks was already
+    /// reached
+    /// * `BulkheadError::ResourceAcquisition` if the resource could not be provided
+    /// for the function
     pub fn execute_cmd(&self, cmd: C, timeout: Duration) -> BulkheadResult<T, E> {
         let exec = self.exec_cmd.clone();
         let f = move |resource: P::Resource| (exec)(cmd, resource);
         self.limiter.execute(f, timeout)
     }
 
+    /// Execute the given closure. Wait at most until the deadline is met.
+    ///
+    /// # Errors
+    ///
+    /// * `BulkheadError::TimedOut` if the function could not be executet in time
+    /// * `BulkheadError::Task` if the execution of the function itself returned an error
+    /// * `BulkheadError::TaskLimitReached` if the maximum number of enqueued tasks was already
+    /// reached
+    /// * `BulkheadError::ResourceAcquisition` if the resource could not be provided
+    /// for the function
     pub fn execute_cmd_until(&self, cmd: C, deadline: Instant) -> BulkheadResult<T, E> {
         let exec = self.exec_cmd.clone();
         let f = move |resource: P::Resource| (exec)(cmd, resource);
         self.limiter.execute_until(f, deadline)
     }
 
+    /// Execute the given closure. Wait at most for the given `Duration`.
+    ///
+    /// # Errors
+    ///
+    /// * `BulkheadError::TimedOut` if the function could not be executet in time
+    /// * `BulkheadError::Task` if the execution of the function itself returned an error
+    /// * `BulkheadError::TaskLimitReached` if the maximum number of enqueued tasks was already
+    /// reached
+    /// * `BulkheadError::ResourceAcquisition` if the resource could not be provided
+    /// for the function
     pub fn execute<TT, EE, FF>(&self, f: FF, timeout: Duration) -> BulkheadResult<TT, EE>
     where
         TT: Send + 'static,
@@ -207,6 +267,16 @@ where
         self.limiter.execute(f, timeout)
     }
 
+    /// Execute the given closure. Wait at most until the deadline is met.
+    ///
+    /// # Errors
+    ///
+    /// * `BulkheadError::TimedOut` if the function could not be executet in time
+    /// * `BulkheadError::Task` if the execution of the function itself returned an error
+    /// * `BulkheadError::TaskLimitReached` if the maximum number of enqueued tasks was already
+    /// reached
+    /// * `BulkheadError::ResourceAcquisition` if the resource could not be provided
+    /// for the function
     pub fn execute_until<TT, EE, FF>(&self, f: FF, deadline: Instant) -> BulkheadResult<TT, EE>
     where
         TT: Send + 'static,
@@ -216,7 +286,7 @@ where
         self.limiter.execute_until(f, deadline)
     }
 
-    /// Returns the number og jobs that are currently enqueued
+    /// Returns the number of jobs that are currently enqueued
     pub fn queued_count(&self) -> usize {
         self.limiter.queued_count()
     }
