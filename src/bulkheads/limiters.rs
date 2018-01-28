@@ -142,7 +142,6 @@ impl<P> Clone for SharedResourceLimiter<P> {
 #[cfg(test)]
 mod shared_resource_limiter_tests {
     use super::*;
-    use super::super::*;
 
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
