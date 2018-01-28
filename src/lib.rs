@@ -27,4 +27,5 @@
 
 extern crate threadpool;
 
+pub mod fuses;
 pub mod bulkheads;
