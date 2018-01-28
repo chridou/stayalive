@@ -5,3 +5,4 @@ authors = ["chridou <chridou@users.noreply.github.com>"]
 
 [dependencies]
 chan = "0.1.0"
+threadpool = "1.7.0"
