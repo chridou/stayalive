@@ -2,7 +2,14 @@
 name = "stayalive"
 version = "0.1.0"
 authors = ["chridou <chridou@users.noreply.github.com>"]
+description = "A collection of resilience patterns"
+repository = "https://github.com/chridou/stayalive"
+homepage = "https://github.com/chridou/stayalive"
+documentation = "https://docs.rs/stayalive"
+readme = "README.MD"
+keywords = ["microservices", "web", "resilience", "bulkhead", "circuitbreaker"]
+categories = ["web-programming"]
+license = "Apache-2.0/MIT"
 
 [dependencies]
-chan = "0.1.0"
 threadpool = "1.7.0"

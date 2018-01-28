@@ -22,7 +22,7 @@ use threadpool::ThreadPool;
 
 use super::{BulkheadError, BulkheadResult};
 
-pub struct SharedResourceLimiterConfig {
+pub struct Config {
     /// The number of worker threads to use which is also
     /// the maximum number of jobs executed on the
     /// resource concurrently
@@ -50,10 +50,7 @@ impl<P> SharedResourceLimiter<P>
 where
     P: SharedResourceProvider + Send + Sync + 'static,
 {
-    pub fn new(
-        resource_provider: P,
-        config: SharedResourceLimiterConfig,
-    ) -> Result<SharedResourceLimiter<P>, String> {
+    pub fn new(resource_provider: P, config: Config) -> Result<SharedResourceLimiter<P>, String> {
         if config.n_workers == 0 {
             return Err("'n_workers' must be greater than zero.".to_string());
         }
@@ -89,7 +86,7 @@ where
     {
         let jobs = self.pool.queued_count();
         if self.pool.queued_count() > self.max_queued {
-            return Err(BulkheadError::TooManyJobs(jobs));
+            return Err(BulkheadError::TooManyTasks(jobs));
         }
 
         let deadline = Instant::now() + timeout;
@@ -183,7 +180,7 @@ mod shared_resource_limiter_tests {
             resource: Adder { to_add: 42 },
         };
 
-        let config = SharedResourceLimiterConfig {
+        let config = Config {
             n_workers: 2,
             max_queued: 2,
         };
@@ -212,7 +209,7 @@ mod shared_resource_limiter_tests {
             resource: Adder { to_add: 42 },
         };
 
-        let config = SharedResourceLimiterConfig {
+        let config = Config {
             n_workers: 10,
             max_queued: 100,
         };
