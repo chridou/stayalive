@@ -10,9 +10,9 @@
 //! * The resource itself is limited. E.g. it can only handle
 //! a certain amount of operations at a time.
 //!
-//! # Limitations
+//! # What you should know
 //!
-//! Using a bulkhead has a great performance impact.
+//! Using the components in this module has a great performance impact.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
