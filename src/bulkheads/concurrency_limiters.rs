@@ -29,7 +29,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::sync::mpsc;
 
-use threadpool::ThreadPool;
+use threadpool::{Builder, ThreadPool};
 
 use super::{BulkheadError, BulkheadResult};
 
@@ -37,9 +37,46 @@ pub struct Config {
     /// The number of worker threads to use which is also
     /// the maximum number of jobs executed on the
     /// resource concurrently
-    pub n_workers: usize,
+    pub num_threads: usize,
     /// The maximum number of jobs that may be queued for execution
     pub max_queued: usize,
+    /// The stack size for the workers
+    pub thread_stack_size: Option<usize>,
+    /// The name of all the workers
+    pub thread_name: Option<String>,
+}
+
+impl Default for Config {
+    fn default() -> Config {
+        Config {
+            num_threads: 4,
+            max_queued: 100,
+            thread_stack_size: None,
+            thread_name: None,
+        }
+    }
+}
+
+impl Config {
+    pub fn with_num_threads(mut self, n: usize) -> Self {
+        self.num_threads = n;
+        self
+    }
+
+    pub fn with_max_queued(mut self, n: usize) -> Self {
+        self.max_queued = n;
+        self
+    }
+
+    pub fn with_thread_stack_size(mut self, n: usize) -> Self {
+        self.thread_stack_size = Some(n);
+        self
+    }
+
+    pub fn with_thread_name<T: Into<String>>(mut self, name: T) -> Self {
+        self.thread_name = Some(name.into());
+        self
+    }
 }
 
 /// Provides a shared resource
@@ -67,11 +104,23 @@ where
     /// Create a new `ConcurrencyLimiter` given a
     /// `ResourceProvider`.
     pub fn new(resource_provider: P, config: Config) -> Result<ConcurrencyLimiter<P>, String> {
-        if config.n_workers == 0 {
+        if config.num_threads == 0 {
             return Err("'n_workers' must be greater than zero.".to_string());
         }
 
-        let pool = ThreadPool::new(config.n_workers);
+        let builder = Builder::new().num_threads(config.num_threads);
+        let builder = if let Some(name) = config.thread_name {
+            builder.thread_name(name)
+        } else {
+            builder
+        };
+        let builder = if let Some(stack_size) = config.thread_stack_size {
+            builder.thread_stack_size(stack_size)
+        } else {
+            builder
+        };
+
+        let pool = builder.build();
 
         Ok(ConcurrencyLimiter {
             pool,
@@ -262,7 +311,7 @@ where
     where
         TT: Send + 'static,
         EE: Send + 'static,
-        FF: FnOnce(P::Resource) -> Result<TT, EE> + Send + 'static,
+        FF: Fn(P::Resource) -> Result<TT, EE> + Send + 'static,
     {
         self.limiter.execute(f, timeout)
     }
@@ -337,10 +386,7 @@ mod concurrency_limiter_tests {
             resource: Adder { to_add: 42 },
         };
 
-        let config = Config {
-            n_workers: 2,
-            max_queued: 2,
-        };
+        let config = Config::default().with_num_threads(2).with_max_queued(2);
 
         let limiter = ConcurrencyLimiter::new(provider, config).unwrap();
 
@@ -365,11 +411,7 @@ mod concurrency_limiter_tests {
             resource: Adder { to_add: 42 },
         };
 
-        let config = Config {
-            n_workers: 2,
-            max_queued: 2,
-        };
-
+        let config = Config::default().with_num_threads(2).with_max_queued(2);
         let limiter =
             CmdConcurrencyLimiter::new(provider, |cmd, adder| adder.add(cmd), config).unwrap();
 
@@ -387,17 +429,14 @@ mod concurrency_limiter_tests {
 
     #[test]
     fn should_work_from_multiple_threads() {
-        let n = 1000;
+        let n = 100;
         let n_threads = 10;
 
         let provider = AdderProvider {
             resource: Adder { to_add: 42 },
         };
 
-        let config = Config {
-            n_workers: 10,
-            max_queued: 100,
-        };
+        let config = Config::default().with_num_threads(10).with_max_queued(100);
 
         let limiter = ConcurrencyLimiter::new(provider, config).unwrap();
 
