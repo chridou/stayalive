@@ -386,7 +386,7 @@ mod concurrency_limiter_tests {
             resource: Adder { to_add: 42 },
         };
 
-        let config = Config::default().with_num_threads(n).with_max_queued(2);
+        let config = Config::default().with_num_threads(2).with_max_queued(2);
 
         let limiter = ConcurrencyLimiter::new(provider, config).unwrap();
 
@@ -411,7 +411,7 @@ mod concurrency_limiter_tests {
             resource: Adder { to_add: 42 },
         };
 
-        let config = Config::default().with_num_threads(n).with_max_queued(2);
+        let config = Config::default().with_num_threads(2).with_max_queued(2);
         let limiter =
             CmdConcurrencyLimiter::new(provider, |cmd, adder| adder.add(cmd), config).unwrap();
 
