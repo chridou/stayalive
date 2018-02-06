@@ -429,7 +429,7 @@ mod concurrency_limiter_tests {
 
     #[test]
     fn should_work_from_multiple_threads() {
-        let n = 1000;
+        let n = 100;
         let n_threads = 10;
 
         let provider = AdderProvider {
