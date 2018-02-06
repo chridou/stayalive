@@ -11,6 +11,33 @@ pub struct NcbState {
     open_until: Option<Instant>,
 }
 
+#[derive(Debug, Clone)]
+pub struct Config {
+    pub max_errors: usize,
+    pub recovery_period: Duration,
+}
+
+impl Config {
+    pub fn with_max_errors(mut self, n: usize) -> Self {
+        self.max_errors = n;
+        self
+    }
+
+    pub fn with_recovery_period(mut self, d: Duration) -> Self {
+        self.recovery_period = d;
+        self
+    }
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            max_errors: 10,
+            recovery_period: Duration::from_secs(1),
+        }
+    }
+}
+
 /// A very simple circuit breaker that opens on consecutive failures.
 ///
 /// This circuit breaker is not very accurate and its state
@@ -25,13 +52,10 @@ pub struct NaiveCircuitBreaker {
 }
 
 impl NaiveCircuitBreaker {
-    pub fn new(
-        max_errors: usize,
-        recovery_period: Duration,
-    ) -> Result<NaiveCircuitBreaker, String> {
+    pub fn new(config: Config) -> Result<NaiveCircuitBreaker, String> {
         Ok(NaiveCircuitBreaker {
-            max_errors,
-            recovery_period,
+            max_errors: config.max_errors,
+            recovery_period: config.recovery_period,
             ncb_state: Arc::new(Mutex::new(NcbState {
                 errors: 0,
                 open_until: None,

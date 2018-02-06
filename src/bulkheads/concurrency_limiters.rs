@@ -46,6 +46,39 @@ pub struct Config {
     pub thread_name: Option<String>,
 }
 
+impl Default for Config {
+    fn default() -> Config {
+        Config {
+            num_threads: 4,
+            max_queued: 100,
+            thread_stack_size: None,
+            thread_name: None,
+        }
+    }
+}
+
+impl Config {
+    pub fn with_num_threads(mut self, n: usize) -> Self {
+        self.num_threads = n;
+        self
+    }
+
+    pub fn with_max_queued(mut self, n: usize) -> Self {
+        self.max_queued = n;
+        self
+    }
+
+    pub fn with_thread_stack_size(mut self, n: usize) -> Self {
+        self.thread_stack_size = Some(n);
+        self
+    }
+
+    pub fn with_thread_name<T: Into<String>>(mut self, name: T) -> Self {
+        self.thread_name = Some(name.into());
+        self
+    }
+}
+
 /// Provides a shared resource
 pub trait SharedResourceProvider {
     type Resource;
@@ -353,10 +386,7 @@ mod concurrency_limiter_tests {
             resource: Adder { to_add: 42 },
         };
 
-        let config = Config {
-            n_workers: 2,
-            max_queued: 2,
-        };
+        let config = Config::default().with_num_threads(n).with_max_queued(2);
 
         let limiter = ConcurrencyLimiter::new(provider, config).unwrap();
 
@@ -381,11 +411,7 @@ mod concurrency_limiter_tests {
             resource: Adder { to_add: 42 },
         };
 
-        let config = Config {
-            n_workers: 2,
-            max_queued: 2,
-        };
-
+        let config = Config::default().with_num_threads(n).with_max_queued(2);
         let limiter =
             CmdConcurrencyLimiter::new(provider, |cmd, adder| adder.add(cmd), config).unwrap();
 
@@ -410,10 +436,7 @@ mod concurrency_limiter_tests {
             resource: Adder { to_add: 42 },
         };
 
-        let config = Config {
-            n_workers: 10,
-            max_queued: 100,
-        };
+        let config = Config::default().with_num_threads(10).with_max_queued(100);
 
         let limiter = ConcurrencyLimiter::new(provider, config).unwrap();
 
