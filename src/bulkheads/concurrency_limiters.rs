@@ -25,7 +25,7 @@
 //! might still being executed. This makes it mandatory that you also set
 //! timeouts(e.g. request timeouts) matching your requirements.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use std::sync::mpsc;
 
@@ -92,7 +92,7 @@ pub trait SharedResourceProvider {
 /// The resource is accessed via a function that is gets the resource as
 /// a parameter.
 pub struct ConcurrencyLimiter<P> {
-    pool: ThreadPool,
+    pool: Arc<Mutex<ThreadPool>>,
     resource_provider: Arc<P>,
     max_queued: usize,
 }
@@ -123,7 +123,7 @@ where
         let pool = builder.build();
 
         Ok(ConcurrencyLimiter {
-            pool,
+            pool: Arc::new(Mutex::new(pool)),
             resource_provider: Arc::new(resource_provider),
             max_queued: config.max_queued,
         })
@@ -145,9 +145,9 @@ where
         E: Send + 'static,
         F: FnOnce(P::Resource) -> Result<T, E> + Send + 'static,
     {
-        let jobs = self.pool.queued_count();
-        if self.pool.queued_count() > self.max_queued {
-            return Err(BulkheadError::TaskLimitReached(jobs));
+        let n_jobs = self.pool.lock().unwrap().queued_count();
+        if n_jobs > self.max_queued {
+            return Err(BulkheadError::TaskLimitReached(n_jobs));
         }
 
         let deadline = Instant::now() + timeout;
@@ -169,7 +169,7 @@ where
             let _ = tx.send(back_msg);
         };
 
-        self.pool.execute(job);
+        self.pool.lock().unwrap().execute(job);
 
         match rx.recv_timeout(timeout) {
             Ok(Ok(r)) => Ok(r),
@@ -205,12 +205,12 @@ where
 
     /// Returns the number of jobs that are currently enqueued
     pub fn queued_count(&self) -> usize {
-        self.pool.queued_count()
+        self.pool.lock().unwrap().queued_count()
     }
 
     /// Returns the number of jobs currently being executed
     pub fn active_count(&self) -> usize {
-        self.pool.active_count()
+        self.pool.lock().unwrap().active_count()
     }
 }
 
