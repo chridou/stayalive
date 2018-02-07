@@ -3,7 +3,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use circuitbreakers::{CircuitBreaker, CircuitBreakerError, CircuitBreakerResult, State};
+use circuitbreakers::{CircuitBreakerError, CircuitBreakerResult, State};
 
 #[derive(Clone)]
 pub struct NcbState {
@@ -63,7 +63,8 @@ impl NaiveCircuitBreaker {
         })
     }
 
-    pub fn execute<T, E, F>(&self, f: F) -> CircuitBreakerResult<T, E>
+    /// Call the given `Fn` from the circuit breaker
+    pub fn call<T, E, F>(&self, f: F) -> CircuitBreakerResult<T, E>
     where
         F: Fn() -> Result<T, E>,
     {
@@ -116,19 +117,63 @@ impl NaiveCircuitBreaker {
             }
         }
     }
-}
 
-impl CircuitBreaker for NaiveCircuitBreaker {
-    fn execute<T, E, F>(&self, f: F) -> CircuitBreakerResult<T, E>
+    /// Call the given `FnOnce` from the circuit breaker
+    pub fn call_once<T, E, F>(&self, f: F) -> CircuitBreakerResult<T, E>
     where
-        T: Send + 'static,
-        E: Send + 'static,
-        F: Fn() -> Result<T, E>,
+        F: FnOnce() -> Result<T, E>,
     {
-        NaiveCircuitBreaker::execute(self, f)
+        let state = { self.ncb_state.lock().unwrap().clone() };
+
+        if let Some(until) = state.open_until {
+            if until > Instant::now() {
+                return Err(CircuitBreakerError::Open);
+            } else {
+                // Half open. Open phase is over and nobody set it to None yet.
+                match f() {
+                    Ok(r) => {
+                        let state = &mut self.ncb_state.lock().unwrap();
+                        state.open_until = None;
+                        state.errors = 0;
+                        return Ok(r);
+                    }
+                    Err(err) => {
+                        // Failed in half open. Immediately open again.
+                        let state = &mut self.ncb_state.lock().unwrap();
+                        state.open_until = Some(Instant::now() + self.recovery_period);
+                        state.errors = 0;
+                        return Err(CircuitBreakerError::Execution(err));
+                    }
+                }
+            }
+        } else {
+            match f() {
+                Ok(r) => {
+                    let state = &mut self.ncb_state.lock().unwrap();
+                    state.errors = 0;
+                    state.open_until = None;
+                    return Ok(r);
+                }
+                Err(err) => {
+                    // Failed in closed. Check what to do.
+                    if state.errors < self.max_errors {
+                        // Still fine
+                        let state = &mut self.ncb_state.lock().unwrap();
+                        state.errors += 1;
+                        state.open_until = None;
+                    } else {
+                        // Open now...
+                        let state = &mut self.ncb_state.lock().unwrap();
+                        state.errors = 0;
+                        state.open_until = Some(Instant::now() + self.recovery_period);
+                    }
+                    return Err(CircuitBreakerError::Execution(err));
+                }
+            }
+        }
     }
 
-    fn state(&self) -> State {
+    pub fn state(&self) -> State {
         let state = self.ncb_state.lock().unwrap();
         if let Some(until) = state.open_until {
             if until > Instant::now() {
