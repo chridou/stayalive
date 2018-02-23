@@ -19,7 +19,7 @@ pub enum BulkheadError<E> {
     /// There are curently too many tasks to be processsed
     TaskLimitReached(usize),
     /// The resource required to for execution was not available
-    ResourceAcquisition,
+    ResourceAcquisition(String),
 }
 
 impl<E> fmt::Display for BulkheadError<E>
@@ -32,7 +32,7 @@ where
             Task(ref e) => write!(f, "task failed: {}", e),
             TimedOut => write!(f, "the task timed out"),
             TaskLimitReached(ref n) => write!(f, "there are too many tasks enqueued: {}", n),
-            ResourceAcquisition => write!(f, "resource acquisition failed"),
+            ResourceAcquisition(ref msg) => write!(f, "Resource acquisition failed: {}", msg),
         }
     }
 }
@@ -47,7 +47,7 @@ where
             Task(_) => "task failed",
             TimedOut => "the task timed out",
             TaskLimitReached(_) => "there are too many tasks enqueued",
-            ResourceAcquisition => "resource acquisition failed",
+            ResourceAcquisition(_) => "resource acquisition failed",
         }
     }
 

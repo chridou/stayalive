@@ -84,7 +84,7 @@ pub trait SharedResourceProvider {
     type Resource;
     /// Get a resource. Returns `None` if no resource could be
     /// aquired
-    fn get_resource(&self) -> Option<Self::Resource>;
+    fn get_resource(&self) -> Result<Self::Resource, String>;
 }
 
 /// Limits the number of concurent accesses on a resource
@@ -161,10 +161,9 @@ where
                 return;
             }
 
-            let back_msg = if let Some(res) = resource_provider.get_resource() {
-                f(res).map_err(BulkheadError::Task)
-            } else {
-                Err(BulkheadError::ResourceAcquisition)
+            let back_msg = match resource_provider.get_resource() {
+                Ok(res) => f(res).map_err(BulkheadError::Task),
+                Err(err) => Err(BulkheadError::ResourceAcquisition(err.to_string())),
             };
             let _ = tx.send(back_msg);
         };
