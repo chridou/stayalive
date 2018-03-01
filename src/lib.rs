@@ -21,7 +21,8 @@
 //! ```rust
 //! extern crate stayalive;
 //! ```
-
+#[macro_use]
+extern crate failure;
 extern crate threadpool;
 
 pub mod circuitbreakers;

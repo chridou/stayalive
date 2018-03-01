@@ -13,7 +13,7 @@ struct Adder {
 }
 
 impl Adder {
-    pub fn add(&self, x: usize) -> Result<usize, ()> {
+    pub fn add(&self, x: usize) -> Result<usize, String> {
         Ok(self.to_add + x)
     }
 }
@@ -25,8 +25,8 @@ struct AdderProvider {
 impl SharedResourceProvider for AdderProvider {
     type Resource = Adder;
 
-    fn get_resource(&self) -> Option<Adder> {
-        Some(self.resource.clone())
+    fn get_resource(&self) -> Result<Adder, String> {
+        Ok(self.resource.clone())
     }
 }
 

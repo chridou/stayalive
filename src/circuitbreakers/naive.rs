@@ -1,4 +1,7 @@
 //! A very simplistc circuit breaker
+use std::fmt;
+
+use failure::*;
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -52,7 +55,7 @@ pub struct NaiveCircuitBreaker {
 }
 
 impl NaiveCircuitBreaker {
-    pub fn new(config: Config) -> Result<NaiveCircuitBreaker, String> {
+    pub fn new(config: Config) -> Result<NaiveCircuitBreaker, Error> {
         Ok(NaiveCircuitBreaker {
             max_errors: config.max_errors,
             recovery_period: config.recovery_period,
@@ -67,6 +70,7 @@ impl NaiveCircuitBreaker {
     pub fn call<T, E, F>(&self, f: F) -> CircuitBreakerResult<T, E>
     where
         F: Fn() -> Result<T, E>,
+        E: fmt::Display,
     {
         let state = { self.ncb_state.lock().unwrap().clone() };
 
@@ -122,6 +126,7 @@ impl NaiveCircuitBreaker {
     pub fn call_once<T, E, F>(&self, f: F) -> CircuitBreakerResult<T, E>
     where
         F: FnOnce() -> Result<T, E>,
+        E: fmt::Display,
     {
         let state = { self.ncb_state.lock().unwrap().clone() };
 

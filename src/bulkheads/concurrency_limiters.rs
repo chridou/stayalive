@@ -24,6 +24,9 @@
 //! means that even though a timeout error occured a running task
 //! might still being executed. This makes it mandatory that you also set
 //! timeouts(e.g. request timeouts) matching your requirements.
+use std::fmt;
+
+use failure::*;
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -103,9 +106,9 @@ where
 {
     /// Create a new `ConcurrencyLimiter` given a
     /// `ResourceProvider`.
-    pub fn new(resource_provider: P, config: Config) -> Result<ConcurrencyLimiter<P>, String> {
+    pub fn new(resource_provider: P, config: Config) -> Result<ConcurrencyLimiter<P>, Error> {
         if config.num_threads == 0 {
-            return Err("'n_workers' must be greater than zero.".to_string());
+            bail!("'n_workers' must be greater than zero.");
         }
 
         let builder = Builder::new().num_threads(config.num_threads);
@@ -142,7 +145,7 @@ where
     pub fn execute<T, E, F>(&self, f: F, timeout: Duration) -> BulkheadResult<T, E>
     where
         T: Send + 'static,
-        E: Send + 'static,
+        E: Send + 'static + fmt::Display,
         F: FnOnce(P::Resource) -> Result<T, E> + Send + 'static,
     {
         let n_jobs = self.pool.lock().unwrap().queued_count();
@@ -191,7 +194,7 @@ where
     pub fn execute_until<T, E, F>(&self, f: F, deadline: Instant) -> BulkheadResult<T, E>
     where
         T: Send + 'static,
-        E: Send + 'static,
+        E: Send + 'static + fmt::Display,
         F: FnOnce(P::Resource) -> Result<T, E> + Send + 'static,
     {
         let now = Instant::now();
@@ -242,7 +245,7 @@ impl<P: SharedResourceProvider, C, T, E> CmdConcurrencyLimiter<P, C, T, E>
 where
     C: Send + 'static,
     T: Send + 'static,
-    E: Send + 'static,
+    E: Send + 'static + fmt::Display,
     P: SharedResourceProvider + Send + Sync + 'static,
 {
     /// Create a new `CmdConcurrencyLimiter` given a
@@ -252,9 +255,10 @@ where
         resource_provider: P,
         exec_cmd: F,
         config: Config,
-    ) -> Result<CmdConcurrencyLimiter<P, C, T, E>, String>
+    ) -> Result<CmdConcurrencyLimiter<P, C, T, E>, Error>
     where
         F: Fn(C, P::Resource) -> Result<T, E> + Send + Sync + 'static,
+        E: fmt::Display,
     {
         let limiter = ConcurrencyLimiter::new(resource_provider, config)?;
 
@@ -309,7 +313,7 @@ where
     pub fn execute<TT, EE, FF>(&self, f: FF, timeout: Duration) -> BulkheadResult<TT, EE>
     where
         TT: Send + 'static,
-        EE: Send + 'static,
+        EE: Send + 'static + fmt::Display,
         FF: Fn(P::Resource) -> Result<TT, EE> + Send + 'static,
     {
         self.limiter.execute(f, timeout)
@@ -328,7 +332,7 @@ where
     pub fn execute_until<TT, EE, FF>(&self, f: FF, deadline: Instant) -> BulkheadResult<TT, EE>
     where
         TT: Send + 'static,
-        EE: Send + 'static,
+        EE: Send + 'static + fmt::Display,
         FF: FnOnce(P::Resource) -> Result<TT, EE> + Send + 'static,
     {
         self.limiter.execute_until(f, deadline)
@@ -360,7 +364,7 @@ mod concurrency_limiter_tests {
     }
 
     impl Adder {
-        pub fn add(&self, x: usize) -> Result<usize, ()> {
+        pub fn add(&self, x: usize) -> Result<usize, String> {
             Ok(self.to_add + x)
         }
     }
@@ -372,8 +376,8 @@ mod concurrency_limiter_tests {
     impl SharedResourceProvider for AdderProvider {
         type Resource = Adder;
 
-        fn get_resource(&self) -> Option<Adder> {
-            Some(self.resource.clone())
+        fn get_resource(&self) -> Result<Adder, String> {
+            Ok(self.resource.clone())
         }
     }
 
