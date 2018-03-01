@@ -1,8 +1,6 @@
 //! Bulkheads for protecting resources and downstream services
 use std::fmt;
 
-use failure::*;
-
 pub mod concurrency_limiters;
 
 /// Type alias for easier usage of the `Result` a bulkhead returns
